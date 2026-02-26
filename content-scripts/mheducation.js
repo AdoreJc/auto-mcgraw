@@ -124,6 +124,8 @@ function extractCorrectAnswer() {
     questionType = "fill_in_the_blank";
   } else if (container.querySelector(".awd-probe-type-matching")) {
     questionType = "matching";
+  } else if (container.querySelector(".awd-probe-type-sortable")) {
+    questionType = "ordering";
   }
 
   let questionText = "";
@@ -228,7 +230,7 @@ function extractCorrectAnswer() {
     }
   }
 
-  if (questionType === "matching") {
+  if (questionType === "matching" || questionType === "ordering") {
     return null;
   }
 
@@ -297,6 +299,17 @@ function processChatGPTResponse(responseText) {
       );
       // Matching can't be reliably automated. Pause automation so we don't race
       // ahead trying to click Next before the user completes the matching UI.
+      if (isAutomating) {
+        isAutomating = false;
+      }
+      return;
+    } else if (container.querySelector(".awd-probe-type-sortable")) {
+      const orderList = Array.isArray(answers) ? answers : [answers];
+      alert(
+        "Ordering Question – correct order (top to bottom):\n\n" +
+          orderList.map((item, i) => `${i + 1}. ${item}`).join("\n") +
+          "\n\nPlease drag items into this order, then click high confidence and next."
+      );
       if (isAutomating) {
         isAutomating = false;
       }
@@ -559,10 +572,13 @@ function parseQuestion() {
     questionType = "fill_in_the_blank";
   } else if (container.querySelector(".awd-probe-type-matching")) {
     questionType = "matching";
+  } else if (container.querySelector(".awd-probe-type-sortable")) {
+    questionType = "ordering";
   }
 
   let questionText = "";
-  const promptEl = container.querySelector(".prompt");
+  const promptEl = container.querySelector(".prompt") ||
+    document.querySelector(".sortable-component .prompt");
 
   if (questionType === "fill_in_the_blank" && promptEl) {
     const promptClone = promptEl.cloneNode(true);
@@ -594,6 +610,14 @@ function parseQuestion() {
       container.querySelectorAll(".choices-container .content")
     ).map((el) => el.textContent.trim());
     options = { prompts, choices };
+  } else if (questionType === "ordering") {
+    const choiceItems = querySelectorAllIncludingShadow(".choice-item", container);
+    choiceItems.forEach((item) => {
+      const contentEl = item.querySelector(".content p") || item.querySelector(".content");
+      if (contentEl) {
+        options.push(contentEl.textContent.trim());
+      }
+    });
   } else if (questionType !== "fill_in_the_blank") {
     container.querySelectorAll(".choiceText").forEach((el) => {
       options.push(el.textContent.trim());
