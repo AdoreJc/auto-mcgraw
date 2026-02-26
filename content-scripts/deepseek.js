@@ -144,7 +144,7 @@ async function insertQuestion(questionData) {
   }
 
   text +=
-    '\n\nPlease provide your answer in JSON format with keys "answer" and "explanation". Explanations should be no more than one sentence. DO NOT acknowledge the correction in your response, only answer the new question.';
+    '\n\nPlease provide your answer in JSON format with keys "answer" and "explanation". Use list to separate multiple answers. Explanations should be no more than one sentence. DO NOT acknowledge the correction in your response, only answer the new question.';
 
   return new Promise((resolve, reject) => {
     const chatInput = findChatInput();
