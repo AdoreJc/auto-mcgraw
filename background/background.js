@@ -168,24 +168,100 @@ function normalizeOllamaResponse(rawText) {
     .replace(/[\u200B-\u200D\uFEFF]/g, "")
     .trim();
 
-  // Try to pull out a JSON object with answer + explanation if present
-  const jsonPattern = /\{[\s\S]*?"answer"[\s\S]*?"explanation"[\s\S]*?\}/;
-  const match = text.match(jsonPattern);
-  if (match) {
-    return match[0];
-  }
+  // Strip common code-fence wrappers
+  text = text.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
 
-  // Maybe the whole thing is already pure JSON
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed === "object" && "answer" in parsed) {
-      return text;
+  const tryParseAnswerObject = (candidate) => {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (parsed && typeof parsed === "object" && "answer" in parsed) {
+        const explanation =
+          parsed.explanation != null ? String(parsed.explanation) : "";
+        return JSON.stringify({ answer: parsed.answer, explanation });
+      }
+    } catch (e) {}
+    return null;
+  };
+
+  const extractFirstJsonObject = (s) => {
+    const start = s.indexOf("{");
+    if (start === -1) return null;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < s.length; i++) {
+      const ch = s[i];
+      if (inStr) {
+        if (esc) {
+          esc = false;
+        } else if (ch === "\\\\") {
+          esc = true;
+        } else if (ch === '"') {
+          inStr = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inStr = true;
+        continue;
+      }
+      if (ch === "{") depth++;
+      if (ch === "}") {
+        depth--;
+        if (depth === 0) return s.slice(start, i + 1);
+      }
     }
-  } catch (e) {
-    // fall through to wrapping below
+    return null;
+  };
+
+  // 1) Best case: whole response is valid JSON
+  const parsedWhole = tryParseAnswerObject(text);
+  if (parsedWhole) return parsedWhole;
+
+  // 2) Next best: response contains a JSON object substring
+  const jsonObj = extractFirstJsonObject(text);
+  if (jsonObj) {
+    const parsedSub = tryParseAnswerObject(jsonObj);
+    if (parsedSub) return parsedSub;
   }
 
-  // Fallback: wrap plain text as { answer, explanation: "" }
+  // 3) Extract "answer" and "explanation" (quoted / unquoted / arrays) and build valid JSON
+  const extractValue = (key) => {
+    // quoted string
+    const quoted = new RegExp(
+      '"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"',
+      "i"
+    );
+    let m = text.match(quoted);
+    if (m) return m[1].replace(/\\"/g, '"').trim();
+
+    // array or object (valid JSON chunk)
+    const arrayLike = new RegExp('"' + key + '"\\s*:\\s*(\\[[\\s\\S]*?\\])', "i");
+    m = text.match(arrayLike);
+    if (m) {
+      try {
+        return JSON.parse(m[1]);
+      } catch (e) {
+        // fall through
+      }
+    }
+
+    // unquoted primitive-ish value (until comma/brace)
+    const unquoted = new RegExp('"' + key + '"\\s*:\\s*([^,}\\n\\r]+)', "i");
+    m = text.match(unquoted);
+    if (m) return m[1].replace(/"\s*$/, "").trim();
+
+    return "";
+  };
+
+  const answer = extractValue("answer");
+  const explanation = extractValue("explanation");
+
+  if (answer !== undefined && answer !== "" && answer !== "[") {
+    return JSON.stringify({ answer, explanation: explanation || "" });
+  }
+
+  // 3) No JSON structure — wrap whole text as answer
   const safeAnswer = text.replace(/\s+/g, " ").trim();
   return JSON.stringify({ answer: safeAnswer, explanation: "" });
 }

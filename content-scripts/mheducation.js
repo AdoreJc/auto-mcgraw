@@ -287,20 +287,31 @@ function processChatGPTResponse(responseText) {
     lastIncorrectQuestion = null;
     lastCorrectAnswer = null;
 
+    let didApplyAnswer = false;
+
     if (container.querySelector(".awd-probe-type-matching")) {
       alert(
         "Matching Question Solution:\n\n" +
           answers.join("\n") +
           "\n\nPlease input these matches manually, then click high confidence and next."
       );
+      // Matching can't be reliably automated. Pause automation so we don't race
+      // ahead trying to click Next before the user completes the matching UI.
+      if (isAutomating) {
+        isAutomating = false;
+      }
+      return;
     } else if (container.querySelector(".awd-probe-type-fill_in_the_blank")) {
       const inputs = container.querySelectorAll("input.fitb-input");
+      let filled = 0;
       inputs.forEach((input, index) => {
         if (answers[index]) {
           input.value = answers[index];
           input.dispatchEvent(new Event("input", { bubbles: true }));
+          filled += 1;
         }
       });
+      didApplyAnswer = filled > 0;
     } else {
       const choices = querySelectorAllIncludingShadow(
         'input[type="radio"], input[type="checkbox"]',
@@ -355,9 +366,25 @@ function processChatGPTResponse(responseText) {
           }
         }
       });
+
+      didApplyAnswer = choices.some((c) => c && c.checked);
     }
 
     if (isAutomating) {
+      if (!didApplyAnswer) {
+        console.error("Automation error: AI answer did not match any choice.");
+        try {
+          console.log("AI responseText (raw):", responseText);
+          console.log("AI response (parsed):", response);
+          console.log("AI answers (normalized array):", answers);
+        } catch (e) {}
+        alert(
+          "Auto-McGraw couldn't apply the AI answer to this question (no matching option). Automation has been stopped so you can answer manually."
+        );
+        isAutomating = false;
+        return;
+      }
+
       const highButtonSelector =
         '[data-automation-id="confidence-buttons--high_confidence"]';
       Promise.resolve()
@@ -393,9 +420,21 @@ function processChatGPTResponse(responseText) {
               })
               .catch((error) => {
                 console.error("Automation error:", error);
-                isAutomating = false;
+                // Retry once after a delay (e.g. local Ollama can return before UI is ready)
+                setTimeout(() => {
+                  if (!isAutomating) return;
+                  waitForNextButton(15000)
+                    .then((nextButton) => {
+                      nextButton.click();
+                      setTimeout(() => checkForNextStep(), 1000);
+                    })
+                    .catch((retryErr) => {
+                      console.error("Automation error (retry):", retryErr);
+                      isAutomating = false;
+                    });
+                }, 3000);
               });
-          }, 1500);
+          }, 2500);
         })
         .catch((error) => {
           console.error("Automation error:", error);
