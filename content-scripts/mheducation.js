@@ -61,7 +61,7 @@ function handleForcedLearning() {
       waitForElement('[data-automation-id="reading-questions-button"]', 10000)
         .then((toQuestionsButton) => {
           toQuestionsButton.click();
-          return waitForElement(".next-button", 10000);
+          return waitForNextButton(10000);
         })
         .then((nextButton) => {
           nextButton.click();
@@ -302,43 +302,70 @@ function processChatGPTResponse(responseText) {
         }
       });
     } else {
-      const choices = container.querySelectorAll(
-        'input[type="radio"], input[type="checkbox"]'
+      const choices = querySelectorAllIncludingShadow(
+        'input[type="radio"], input[type="checkbox"]',
+        container
       );
+      if (!choices.length) {
+        const fallback = container.querySelectorAll(
+          'input[type="radio"], input[type="checkbox"]'
+        );
+        choices.push(...fallback);
+      }
+
+      const normalizeForMatch = (s) =>
+        (s || "")
+          .trim()
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .replace(/\.$/, "");
+
+      const answerMatchesChoice = (normAnswer, normChoice) => {
+        if (normAnswer === normChoice) return true;
+        const minLen = 12;
+        if (normAnswer.length >= minLen && normChoice.includes(normAnswer)) return true;
+        if (normChoice.length >= minLen && normAnswer.includes(normChoice)) return true;
+        return false;
+      };
 
       choices.forEach((choice) => {
         const label = choice.closest("label");
-        if (label) {
-          const choiceText = label
-            .querySelector(".choiceText")
-            ?.textContent.trim();
-          if (choiceText) {
-            const shouldBeSelected = answers.some((ans) => {
-              if (choiceText === ans) return true;
+        const row = choice.closest(".choice-row");
+        const choiceTextEl = label
+          ? label.querySelector(".choiceText") || label.querySelector(".choice-container")
+          : row?.querySelector(".choiceText") || row?.querySelector(".choice-container");
+        const choiceText = choiceTextEl?.textContent?.trim();
+        if (choiceText) {
+          const normChoice = normalizeForMatch(choiceText);
+          const shouldBeSelected = answers.some((ans) => {
+            const a = normalizeForMatch(typeof ans === "string" ? ans : String(ans));
+            return answerMatchesChoice(a, normChoice);
+          });
 
-              const choiceWithoutPeriod = choiceText.replace(/\.$/, "");
-              const answerWithoutPeriod = ans.replace(/\.$/, "");
-              if (choiceWithoutPeriod === answerWithoutPeriod) return true;
+          const isCheckbox = choice.type === "checkbox";
+          const needsClick = isCheckbox
+            ? choice.checked !== shouldBeSelected
+            : shouldBeSelected && !choice.checked;
 
-              if (choiceText === ans + ".") return true;
-
-              return false;
-            });
-
-            if (shouldBeSelected) {
-              choice.click();
-            }
+          if (needsClick) {
+            choice.focus();
+            choice.click();
+            choice.dispatchEvent(new Event("change", { bubbles: true }));
+            choice.dispatchEvent(new Event("input", { bubbles: true }));
           }
         }
       });
     }
 
     if (isAutomating) {
-      waitForElement(
-        '[data-automation-id="confidence-buttons--high_confidence"]:not([disabled])',
-        10000
-      )
+      const highButtonSelector =
+        '[data-automation-id="confidence-buttons--high_confidence"]';
+      Promise.resolve()
+        .then(() => new Promise((r) => setTimeout(r, 500)))
+        .then(() => waitForElement(highButtonSelector, 10000))
+        .then((button) => waitForEnabled(button, 8000).then(() => button))
         .then((button) => {
+          if (!button) return;
           button.click();
 
           setTimeout(() => {
@@ -357,7 +384,7 @@ function processChatGPTResponse(responseText) {
               }
             }
 
-            waitForElement(".next-button", 10000)
+            waitForNextButton(12000)
               .then((nextButton) => {
                 nextButton.click();
                 setTimeout(() => {
@@ -368,7 +395,7 @@ function processChatGPTResponse(responseText) {
                 console.error("Automation error:", error);
                 isAutomating = false;
               });
-          }, 1000);
+          }, 1500);
         })
         .catch((error) => {
           console.error("Automation error:", error);
@@ -541,11 +568,43 @@ function parseQuestion() {
   };
 }
 
+function querySelectorIncludingShadow(selector, root = document) {
+  const el = root.querySelector(selector);
+  if (el) return el;
+  const walk = (node) => {
+    if (!node || !node.querySelectorAll) return null;
+    for (const child of node.querySelectorAll("*")) {
+      if (child.shadowRoot) {
+        const inShadow = child.shadowRoot.querySelector(selector);
+        if (inShadow) return inShadow;
+        const deep = walk(child.shadowRoot);
+        if (deep) return deep;
+      }
+    }
+    return null;
+  };
+  return walk(root);
+}
+
+function querySelectorAllIncludingShadow(selector, root) {
+  const list = [];
+  const collect = (node) => {
+    if (!node || !node.querySelectorAll) return;
+    node.querySelectorAll(selector).forEach((el) => list.push(el));
+    node.querySelectorAll("*").forEach((child) => {
+      if (child.shadowRoot) collect(child.shadowRoot);
+    });
+  };
+  collect(root);
+  return list;
+}
+
 function waitForElement(selector, timeout = 5000) {
   return new Promise((resolve, reject) => {
     const startTime = Date.now();
     const interval = setInterval(() => {
-      const el = document.querySelector(selector);
+      const el =
+        document.querySelector(selector) || querySelectorIncludingShadow(selector);
       if (el) {
         clearInterval(interval);
         resolve(el);
@@ -554,6 +613,69 @@ function waitForElement(selector, timeout = 5000) {
         reject(new Error("Element not found: " + selector));
       }
     }, 100);
+  });
+}
+
+function waitForEnabled(button, timeout = 5000) {
+  if (!button || !button.hasAttribute("disabled")) {
+    return Promise.resolve(button);
+  }
+  return new Promise((resolve) => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      if (!button.hasAttribute("disabled")) {
+        clearInterval(interval);
+        resolve(button);
+      } else if (Date.now() - startTime > timeout) {
+        clearInterval(interval);
+        resolve(button);
+      }
+    }, 150);
+  });
+}
+
+const NEXT_BUTTON_SELECTORS = [
+  ".next-button",
+  ".button-bar-wrapper .next-button",
+  "awd-topic-overview-button-bar .next-button",
+  '[data-automation-id*="next"]',
+  'button[data-automation-id*="next"]',
+  'a[data-automation-id*="next"]',
+];
+
+function findNextButton() {
+  for (const sel of NEXT_BUTTON_SELECTORS) {
+    const el =
+      document.querySelector(sel) || querySelectorIncludingShadow(sel);
+    if (el) return el;
+  }
+  const collectClickables = (root, list) => {
+    if (!root || !root.querySelectorAll) return;
+    root.querySelectorAll("button, a.btn, [role='button']").forEach((el) => list.push(el));
+    root.querySelectorAll("*").forEach((node) => {
+      if (node.shadowRoot) collectClickables(node.shadowRoot, list);
+    });
+  };
+  const clickables = [];
+  collectClickables(document, clickables);
+  const nextByText = clickables.find((el) => /^\s*next(\s+question)?\s*$/i.test((el.textContent || "").trim()));
+  if (nextByText) return nextByText;
+  return null;
+}
+
+function waitForNextButton(timeout = 10000) {
+  return new Promise((resolve, reject) => {
+    const startTime = Date.now();
+    const interval = setInterval(() => {
+      const el = findNextButton();
+      if (el) {
+        clearInterval(interval);
+        resolve(el);
+      } else if (Date.now() - startTime > timeout) {
+        clearInterval(interval);
+        reject(new Error("Next button not found"));
+      }
+    }, 150);
   });
 }
 
