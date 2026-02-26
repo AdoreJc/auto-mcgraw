@@ -43,6 +43,70 @@ function resetObservation() {
   }
 }
 
+function findChatInput() {
+  const inputSelectors = [
+    "#chat-input",
+    'textarea[placeholder="Message DeepSeek"]',
+    'textarea[placeholder*="Message"]',
+    "textarea.ds-scroll-area",
+    "textarea.d96f2d2a",
+    "textarea",
+  ];
+
+  for (const selector of inputSelectors) {
+    try {
+      const el = document.querySelector(selector);
+      if (el) {
+        return el;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function findSendButton() {
+  // Prefer explicit DeepSeek send area container
+  const container =
+    document.querySelector(".bf38813a") || document.body;
+
+  if (!container) return null;
+
+  const candidates = Array.from(
+    container.querySelectorAll(
+      "[role='button'], .ds-icon-button, button"
+    )
+  );
+
+  let fallback = null;
+
+  for (const el of candidates) {
+    try {
+      const isDisabled =
+        el.getAttribute("aria-disabled") === "true" || el.disabled;
+      if (isDisabled) continue;
+
+      const path = el.querySelector("svg path");
+      const d = path && path.getAttribute("d");
+
+      // DeepSeek send arrow path starts with M8.3125...
+      if (d && d.startsWith("M8.3125")) {
+        return el;
+      }
+
+      if (!fallback) {
+        fallback = el;
+      }
+    } catch (e) {
+      continue;
+    }
+  }
+
+  return fallback;
+}
+
 async function insertQuestion(questionData) {
   const { type, question, options, previousCorrection } = questionData;
   let text = `Type: ${type}\nQuestion: ${question}`;
@@ -83,7 +147,7 @@ async function insertQuestion(questionData) {
     '\n\nPlease provide your answer in JSON format with keys "answer" and "explanation". Explanations should be no more than one sentence. DO NOT acknowledge the correction in your response, only answer the new question.';
 
   return new Promise((resolve, reject) => {
-    const chatInput = document.getElementById("chat-input");
+    const chatInput = findChatInput();
     if (chatInput) {
       setTimeout(() => {
         chatInput.focus();
@@ -91,29 +155,7 @@ async function insertQuestion(questionData) {
         chatInput.dispatchEvent(new Event("input", { bubbles: true }));
 
         setTimeout(() => {
-          const sendButtonSelectors = [
-            '[role="button"].f6d670',
-            ".f6d670",
-            '[role="button"]:has(svg path[d^="M7 16c"])',
-            'button[type="submit"]',
-            '[aria-label="Send message"]',
-            ".bf38813a button",
-            "button:has(svg)",
-            '[data-testid="send-button"]',
-          ];
-
-          let sendButton = null;
-          for (const selector of sendButtonSelectors) {
-            try {
-              const button = document.querySelector(selector);
-              if (button && !button.disabled) {
-                sendButton = button;
-                break;
-              }
-            } catch (e) {
-              continue;
-            }
-          }
+          const sendButton = findSendButton();
 
           if (sendButton) {
             sendButton.click();
