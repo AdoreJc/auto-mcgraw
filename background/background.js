@@ -92,7 +92,102 @@ async function findAndStoreTabs() {
       aiTabId = tabs[0].id;
       aiWindowId = tabs[0].windowId;
     }
+  } else if (aiModel === "ollama") {
+    aiTabId = null;
+    aiWindowId = null;
   }
+}
+
+function formatQuestionPrompt(questionData) {
+  const { type, question, options, previousCorrection } = questionData;
+  let text = `Type: ${type}\nQuestion: ${question}`;
+
+  if (
+    previousCorrection &&
+    previousCorrection.question &&
+    previousCorrection.correctAnswer
+  ) {
+    text =
+      `CORRECTION FROM PREVIOUS ANSWER: For the question "${
+        previousCorrection.question
+      }", your answer was incorrect. The correct answer was: ${JSON.stringify(
+        previousCorrection.correctAnswer
+      )}\n\nNow answer this new question:\n\n` + text;
+  }
+
+  if (type === "matching") {
+    text +=
+      "\nPrompts:\n" +
+      options.prompts.map((prompt, i) => `${i + 1}. ${prompt}`).join("\n");
+    text +=
+      "\nChoices:\n" +
+      options.choices.map((choice, i) => `${i + 1}. ${choice}`).join("\n");
+    text +=
+      "\n\nPlease match each prompt with the correct choice. Format your answer as an array where each element is 'Prompt -> Choice'.";
+  } else if (type === "fill_in_the_blank") {
+    text +=
+      "\n\nThis is a fill in the blank question. If there are multiple blanks, provide answers as an array in order of appearance. For a single blank, you can provide a string.";
+  } else if (options && options.length > 0) {
+    text +=
+      "\nOptions:\n" + options.map((opt, i) => `${i + 1}. ${opt}`).join("\n");
+    text +=
+      "\n\nIMPORTANT: Your answer must EXACTLY match one of the above options. Do not include numbers in your answer. If there are periods, include them.";
+  }
+
+  text +=
+    '\n\nPlease provide your answer in JSON format with keys "answer" and "explanation". Use list to separate multiple answers. Explanations should be no more than one sentence. DO NOT acknowledge the correction in your response, only answer the new question.';
+
+  return text;
+}
+
+async function callOllamaApi(model, prompt) {
+  const res = await fetch("http://localhost:11434/api/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: prompt }],
+      stream: false,
+    }),
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err || `Ollama API error: ${res.status}`);
+  }
+  const data = await res.json();
+  const content = data.message && data.message.content ? data.message.content : "";
+  return normalizeOllamaResponse(content);
+}
+
+function normalizeOllamaResponse(rawText) {
+  if (!rawText) {
+    return JSON.stringify({ answer: "", explanation: "" });
+  }
+
+  let text = String(rawText)
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim();
+
+  // Try to pull out a JSON object with answer + explanation if present
+  const jsonPattern = /\{[\s\S]*?"answer"[\s\S]*?"explanation"[\s\S]*?\}/;
+  const match = text.match(jsonPattern);
+  if (match) {
+    return match[0];
+  }
+
+  // Maybe the whole thing is already pure JSON
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === "object" && "answer" in parsed) {
+      return text;
+    }
+  } catch (e) {
+    // fall through to wrapping below
+  }
+
+  // Fallback: wrap plain text as { answer, explanation: "" }
+  const safeAnswer = text.replace(/\s+/g, " ").trim();
+  return JSON.stringify({ answer: safeAnswer, explanation: "" });
 }
 
 async function shouldFocusTabs() {
@@ -107,10 +202,34 @@ async function processQuestion(message) {
   try {
     await findAndStoreTabs();
 
+    if (aiType === "ollama") {
+      if (!mheTabId) mheTabId = message.sourceTabId;
+      const { ollamaModel = "llama3" } = await chrome.storage.sync.get("ollamaModel");
+      const prompt = formatQuestionPrompt(message.question);
+      try {
+        const response = await callOllamaApi(ollamaModel, prompt);
+        await processResponse({ response });
+      } catch (err) {
+        if (mheTabId) {
+          await sendMessageWithRetry(mheTabId, {
+            type: "alertMessage",
+            message: `Ollama error: ${err.message}. Is Ollama running at http://localhost:11434?`,
+          });
+        }
+      }
+      processingQuestion = false;
+      return;
+    }
+
     if (!aiTabId) {
+      const messageText =
+        aiType === "ollama"
+          ? "Ollama is not reachable. Make sure it is running on this computer (http://localhost:11434)."
+          : `Please open ${aiType} in another tab before using automation.`;
+
       await sendMessageWithRetry(mheTabId, {
         type: "alertMessage",
-        message: `Please open ${aiType} in another tab before using automation.`,
+        message: messageText,
       });
       processingQuestion = false;
       return;
@@ -141,7 +260,10 @@ async function processQuestion(message) {
     if (mheTabId) {
       await sendMessageWithRetry(mheTabId, {
         type: "alertMessage",
-        message: `Error communicating with ${aiType}. Please make sure it's open in another tab.`,
+        message:
+          aiType === "ollama"
+            ? "Error communicating with Ollama. Make sure it is running at http://localhost:11434."
+            : `Error communicating with ${aiType}. Please make sure it's open in another tab.`,
       });
     }
   } finally {
@@ -218,7 +340,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (
     message.type === "chatGPTResponse" ||
     message.type === "geminiResponse" ||
-    message.type === "deepseekResponse"
+    message.type === "deepseekResponse" ||
+    message.type === "ollamaResponse"
   ) {
     processResponse(message);
     sendResponse({ received: true });

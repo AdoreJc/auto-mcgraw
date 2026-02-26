@@ -421,6 +421,8 @@ function addAssistantButton() {
         modelName = "Gemini";
       } else if (aiModel === "deepseek") {
         modelName = "DeepSeek";
+      } else if (aiModel === "ollama") {
+        modelName = "Ollama";
       }
 
       const btn = document.createElement("button");
@@ -439,6 +441,8 @@ function addAssistantButton() {
               currentModelName = "Gemini";
             } else if (currentModel === "deepseek") {
               currentModelName = "DeepSeek";
+            } else if (currentModel === "ollama") {
+              currentModelName = "Ollama";
             }
 
             btn.textContent = `Ask ${currentModelName}`;
@@ -485,6 +489,8 @@ function addAssistantButton() {
             newModelName = "Gemini";
           } else if (newModel === "deepseek") {
             newModelName = "DeepSeek";
+          } else if (newModel === "ollama") {
+            newModelName = "Ollama";
           }
 
           if (!isAutomating) {

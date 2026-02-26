@@ -2,6 +2,9 @@ document.addEventListener("DOMContentLoaded", function () {
   const chatgptButton = document.getElementById("chatgpt");
   const geminiButton = document.getElementById("gemini");
   const deepseekButton = document.getElementById("deepseek");
+  const ollamaButton = document.getElementById("ollama");
+  const ollamaOptions = document.getElementById("ollama-options");
+  const ollamaModelSelect = document.getElementById("ollama-model");
   const statusMessage = document.getElementById("status-message");
   const currentVersionElement = document.getElementById("current-version");
   const latestVersionElement = document.getElementById("latest-version");
@@ -17,12 +20,37 @@ document.addEventListener("DOMContentLoaded", function () {
 
   checkUpdatesButton.addEventListener("click", checkForUpdates);
 
-  chrome.storage.sync.get("aiModel", function (data) {
+  async function fetchOllamaModels() {
+    const select = ollamaModelSelect;
+    select.innerHTML = "<option value=\"\">Loading models…</option>";
+    try {
+      const res = await fetch("http://localhost:11434/api/tags");
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      const models = (data.models || []).map((m) => m.name || m.model || "").filter(Boolean);
+      select.innerHTML = models.length
+        ? models.map((name) => `<option value="${name}">${name}</option>`).join("")
+        : "<option value=\"\">No models found</option>";
+      const { ollamaModel } = await chrome.storage.sync.get("ollamaModel");
+      if (ollamaModel && models.includes(ollamaModel)) select.value = ollamaModel;
+      else if (models.length) select.value = models[0];
+    } catch (e) {
+      select.innerHTML = "<option value=\"\">Ollama not running</option>";
+    }
+  }
+
+  function showOllamaOptions(show) {
+    ollamaOptions.style.display = show ? "block" : "none";
+    if (show) fetchOllamaModels();
+  }
+
+  chrome.storage.sync.get(["aiModel", "ollamaModel"], function (data) {
     const currentModel = data.aiModel || "chatgpt";
 
     chatgptButton.classList.remove("active");
     geminiButton.classList.remove("active");
     deepseekButton.classList.remove("active");
+    ollamaButton.classList.remove("active");
 
     if (currentModel === "chatgpt") {
       chatgptButton.classList.add("active");
@@ -30,6 +58,9 @@ document.addEventListener("DOMContentLoaded", function () {
       geminiButton.classList.add("active");
     } else if (currentModel === "deepseek") {
       deepseekButton.classList.add("active");
+    } else if (currentModel === "ollama") {
+      ollamaButton.classList.add("active");
+      showOllamaOptions(true);
     }
 
     checkModelAvailability(currentModel);
@@ -47,11 +78,21 @@ document.addEventListener("DOMContentLoaded", function () {
     setActiveModel("deepseek");
   });
 
+  ollamaButton.addEventListener("click", function () {
+    setActiveModel("ollama");
+  });
+
+  ollamaModelSelect.addEventListener("change", function () {
+    const model = ollamaModelSelect.value;
+    if (model) chrome.storage.sync.set({ ollamaModel: model });
+  });
+
   function setActiveModel(model) {
     chrome.storage.sync.set({ aiModel: model }, function () {
       chatgptButton.classList.remove("active");
       geminiButton.classList.remove("active");
       deepseekButton.classList.remove("active");
+      ollamaButton.classList.remove("active");
 
       if (model === "chatgpt") {
         chatgptButton.classList.add("active");
@@ -59,15 +100,43 @@ document.addEventListener("DOMContentLoaded", function () {
         geminiButton.classList.add("active");
       } else if (model === "deepseek") {
         deepseekButton.classList.add("active");
+      } else if (model === "ollama") {
+        ollamaButton.classList.add("active");
+        showOllamaOptions(true);
+      } else {
+        showOllamaOptions(false);
       }
 
       checkModelAvailability(model);
     });
   }
 
+  async function checkOllamaAvailable() {
+    try {
+      const res = await fetch("http://localhost:11434/api/tags");
+      return res.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function checkModelAvailability(currentModel) {
     statusMessage.textContent = "Checking assistant availability...";
     statusMessage.className = "";
+
+    if (currentModel === "ollama") {
+      checkOllamaAvailable().then((ok) => {
+        if (ok) {
+          statusMessage.textContent = "Ollama is running. Select a model above.";
+          statusMessage.className = "success";
+        } else {
+          statusMessage.textContent =
+            "Start Ollama on this computer (localhost:11434) to use local models.";
+          statusMessage.className = "error";
+        }
+      });
+      return;
+    }
 
     chrome.tabs.query({ url: "https://chatgpt.com/*" }, (chatgptTabs) => {
       const chatgptAvailable = chatgptTabs.length > 0;

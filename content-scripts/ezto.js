@@ -161,7 +161,7 @@ function buildBarAndAppendTo(container) {
 
   chrome.storage.sync.get("aiModel", (data) => {
     const aiModel = data.aiModel || "chatgpt";
-    let modelName = aiModel === "gemini" ? "Gemini" : aiModel === "deepseek" ? "DeepSeek" : "ChatGPT";
+    let modelName = aiModel === "gemini" ? "Gemini" : aiModel === "deepseek" ? "DeepSeek" : aiModel === "ollama" ? "Ollama" : "ChatGPT";
 
     const btn = document.createElement("button");
     btn.textContent = isAutomating ? "Stop" : `Ask ${modelName}`;
@@ -172,7 +172,7 @@ function buildBarAndAppendTo(container) {
       if (isAutomating) {
         isAutomating = false;
         chrome.storage.sync.get("aiModel", (d) => {
-          btn.textContent = `Ask ${d.aiModel === "gemini" ? "Gemini" : d.aiModel === "deepseek" ? "DeepSeek" : "ChatGPT"}`;
+          btn.textContent = `Ask ${d.aiModel === "gemini" ? "Gemini" : d.aiModel === "deepseek" ? "DeepSeek" : d.aiModel === "ollama" ? "Ollama" : "ChatGPT"}`;
         });
         return;
       }
@@ -198,7 +198,7 @@ function buildBarAndAppendTo(container) {
     chrome.storage.onChanged.addListener((changes) => {
       if (changes.aiModel && !isAutomating) {
         const v = changes.aiModel.newValue;
-        btn.textContent = `Ask ${v === "gemini" ? "Gemini" : v === "deepseek" ? "DeepSeek" : "ChatGPT"}`;
+        btn.textContent = `Ask ${v === "gemini" ? "Gemini" : v === "deepseek" ? "DeepSeek" : v === "ollama" ? "Ollama" : "ChatGPT"}`;
       }
     });
   });
