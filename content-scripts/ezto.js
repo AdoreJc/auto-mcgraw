@@ -26,12 +26,53 @@ function setupMessageListener() {
   chrome.runtime.onMessage.addListener(messageListener);
 }
 
+/**
+ * If the question wrap contains a video player, get the transcript text
+ * (from the main transcript panel or the descriptive transcript).
+ * @returns {string} Transcript text or empty string.
+ */
+function getVideoTranscriptFromQuestionWrap(questionWrap) {
+  if (!questionWrap) return "";
+  const hasVideo =
+    questionWrap.querySelector(".video-player") ||
+    questionWrap.querySelector(".video-js");
+  if (!hasVideo) return "";
+
+  // Prefer main transcript (timestamped lines)
+  const transcriptPanel = questionWrap.querySelector('[id$="_transcript"]');
+  if (transcriptPanel) {
+    const lines = transcriptPanel.querySelectorAll(".transcript-line .transcript-text");
+    if (lines.length) {
+      return Array.from(lines)
+        .map((el) => el.textContent.trim())
+        .filter(Boolean)
+        .join(" ");
+    }
+  }
+
+  // Fallback: descriptive transcript
+  const descTranscript = questionWrap.querySelector(".gaspar-desc-transcript");
+  if (descTranscript) {
+    return descTranscript.textContent.trim();
+  }
+  return "";
+}
+
 function parseQuestion() {
-  const questionEl = document.querySelector(".question-wrap .question, .question");
+  const questionWrap = document.querySelector(".question-wrap");
+  const questionEl = questionWrap
+    ? questionWrap.querySelector(".question")
+    : document.querySelector(".question");
   if (!questionEl) return null;
 
-  const questionText = questionEl.textContent.trim();
+  let questionText = questionEl.textContent.trim();
   if (!questionText) return null;
+
+  const transcript = getVideoTranscriptFromQuestionWrap(questionWrap);
+  if (transcript) {
+    questionText =
+      questionText + "\n\n[Video transcript]\n" + transcript;
+  }
 
   const answersWrap = document.querySelector(".answers-wrap.multiple-choice");
   let type = "multiple_choice";
